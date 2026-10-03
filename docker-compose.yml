@@ -1,0 +1,99 @@
+# ---------------------------------------------------------------------------
+# TaskFlow API - Docker Compose (API + PostgreSQL)
+#
+# Two long-running services (api, postgres) plus a one-off migration service
+# (migrate) that runs `prisma migrate deploy` before the API starts.
+#
+# Services talk over the dedicated bridge network `taskflow-network`.
+# PostgreSQL is NOT published to the host (no `ports:` on the postgres service),
+# so it cannot conflict with the PostgreSQL already running on localhost:5432.
+# ---------------------------------------------------------------------------
+
+name: taskflow
+
+services:
+  # -------------------------------------------------------------------------
+  # PostgreSQL database (internal only)
+  # -------------------------------------------------------------------------
+  postgres:
+    image: postgres:18-alpine
+    container_name: taskflow-postgres
+    restart: unless-stopped
+    env_file:
+      - .env.docker
+    volumes:
+      # PostgreSQL 18+ stores data in a major-version subdirectory, so the
+      # volume is mounted at /var/lib/postgresql (NOT /var/lib/postgresql/data).
+      - taskflow-postgres-data:/var/lib/postgresql
+    networks:
+      - taskflow-network
+    # NOTE: no `ports:` here on purpose. The database is only reachable from
+    # other containers on `taskflow-network`, never from the Windows host.
+    healthcheck:
+      # Verifies the configured user AND database are ready for connections.
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # -------------------------------------------------------------------------
+  # One-off migration runner
+  # Reuses the existing Dockerfile "builder" stage because the lean production
+  # image intentionally has no dev dependencies (no Prisma CLI, no ts-node).
+  # Runs `prisma migrate deploy` (applies committed migrations, never resets).
+  # -------------------------------------------------------------------------
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: builder
+    image: taskflow-api-migrate:1.0.0
+    container_name: taskflow-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env.docker
+    command: ["npx", "prisma", "migrate", "deploy"]
+    networks:
+      - taskflow-network
+    restart: "no"
+
+  # -------------------------------------------------------------------------
+  # NestJS API
+  # -------------------------------------------------------------------------
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: taskflow-api:1.0.0
+    container_name: taskflow-api
+    restart: unless-stopped
+    init: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    env_file:
+      - .env.docker
+    ports:
+      - "3000:3000"
+    networks:
+      - taskflow-network
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3000/health', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+networks:
+  taskflow-network:
+    name: taskflow-network
+    driver: bridge
+
+volumes:
+  taskflow-postgres-data:
+    name: taskflow-postgres-data

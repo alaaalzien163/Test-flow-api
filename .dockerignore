@@ -1,0 +1,42 @@
+# Dependencies (installed inside the image)
+node_modules
+
+# Build output and tooling artifacts
+dist
+coverage
+*.tsbuildinfo
+
+# Environment files / secrets
+.env
+.env.*
+!.env.example
+
+# Version control
+.git
+.gitignore
+
+# Tests (not needed to build or run the production image)
+test
+**/*.spec.ts
+
+# Logs and temporary files
+*.log
+npm-debug.log*
+logs
+tmp
+temp
+*.tmp
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+.vscode
+.idea
+
+# Docker-related files
+Dockerfile
+.dockerignore
+docker-compose*.yml
+
+# Local documentation (optional)
+*.md
